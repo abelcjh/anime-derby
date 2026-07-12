@@ -231,7 +231,14 @@ function Metric({ label, value }: { label: string; value: string | number }) { r
 function ResultMedia({ job }: { job: Job }) {
   const url = job.videoUrl || fallbackVideo(job.side, job.persona, job.prediction)
   if (job.videoUrl && /\.mp4(\?|$)|\.webm(\?|$)|\.mov(\?|$)/i.test(job.videoUrl)) {
-    return <video src={job.videoUrl} controls playsInline autoPlay loop />
+    const type = job.videoUrl.includes('.webm') ? 'video/webm' : job.videoUrl.includes('.mov') ? 'video/quicktime' : 'video/mp4'
+    return <div className="mediaBox">
+      <video controls playsInline preload="metadata" key={job.videoUrl}>
+        <source src={job.videoUrl} type={type} />
+        Your browser could not play this video inline.
+      </video>
+      <a className="videoLink" href={job.videoUrl} target="_blank" rel="noreferrer">Open video in new tab</a>
+    </div>
   }
   return <img src={url} alt="generated anime prophecy" />
 }
