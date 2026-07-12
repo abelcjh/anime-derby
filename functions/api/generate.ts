@@ -47,7 +47,7 @@ async function runSeedance(env: Env, prompt: string) {
   })
   if (!res.ok) return undefined
   const data: any = await res.json()
-  return data?.result?.video || data?.video || data?.result?.url
+  return data?.result?.result?.video || data?.result?.video || data?.video || data?.result?.url
 }
 
 async function runElevenLabs(env: Env, script: string) {
