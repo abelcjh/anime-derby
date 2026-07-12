@@ -1,3 +1,5 @@
+/// <reference types="@cloudflare/workers-types" />
+
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const body = await request.json() as GenerateRequest
   const script = body.script || `Anime Derby prophecy for ${body.side}: ${body.prediction}.`
@@ -36,7 +38,11 @@ async function runSeedance(env: Env, prompt: string) {
   if (!env.CLOUDFLARE_ACCOUNT_ID || !env.CLOUDFLARE_API_TOKEN) return undefined
   const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/ai/run`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}`, 'Content-Type': 'application/json' },
+    headers: {
+      Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}`,
+      'Content-Type': 'application/json',
+      'cf-aig-gateway-id': 'default',
+    },
     body: JSON.stringify({ model: 'bytedance/seedance-2.0', input: { prompt, aspect_ratio: '9:16', duration: 5, resolution: '720p' } }),
   })
   if (!res.ok) return undefined
