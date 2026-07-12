@@ -1,0 +1,26 @@
+{
+  "name": "anime-derby",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview --host 0.0.0.0",
+    "convex:dev": "convex dev",
+    "deploy:cloudflare": "npm run build && wrangler pages deploy dist --project-name anime-derby"
+  },
+  "dependencies": {
+    "@cloudflare/workers-types": "^4.20260709.0",
+    "@vitejs/plugin-react": "latest",
+    "convex": "^1.30.0",
+    "typescript": "~5.9.3",
+    "vite": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "oxlint": "latest"
+  }
+}
