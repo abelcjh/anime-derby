@@ -80,6 +80,12 @@ function buildPrompt(side: Side, persona: Persona, prediction: Prediction) {
 function buildCaption(side: Side, persona: Persona, prediction: Prediction) {
   return `I just generated my France vs Spain anime prophecy.\n\nTeam: ${side}\nPersona: ${persona}\nPrediction: ${prediction}\n\nmake your counter-video here:\n${liveUrl}`
 }
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out`)), ms)),
+  ])
+}
 function fallbackVideo(side: Side, persona: Persona, prediction: Prediction) {
   const colors = side === 'France' ? ['#173bff', '#ffffff', '#f42b5b'] : ['#ff2a2a', '#ffd447', '#8b1111']
   const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='720' height='1280' viewBox='0 0 720 1280'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop stop-color='${colors[0]}'/><stop offset='.55' stop-color='${colors[1]}'/><stop offset='1' stop-color='${colors[2]}'/></linearGradient><filter id='glow'><feGaussianBlur stdDeviation='8' result='b'/><feMerge><feMergeNode in='b'/><feMergeNode in='SourceGraphic'/></feMerge></filter></defs><rect width='720' height='1280' fill='url(#g)'/><g fill='none' stroke='rgba(255,255,255,.45)' stroke-width='8'>${Array.from({length:18},(_,i)=>`<path d='M${40*i%720} 0 L${720-(i*73%720)} 1280'/>`).join('')}</g><circle cx='360' cy='540' r='150' fill='rgba(0,0,0,.28)' stroke='white' stroke-width='10' filter='url(#glow)'/><text x='360' y='250' text-anchor='middle' font-family='Arial Black,Arial' font-size='58' fill='white'>ANIME DERBY</text><text x='360' y='340' text-anchor='middle' font-family='Arial Black,Arial' font-size='64' fill='white'>${side}</text><text x='360' y='555' text-anchor='middle' font-family='Arial Black,Arial' font-size='88' fill='white'>⚽</text><text x='360' y='790' text-anchor='middle' font-family='Arial Black,Arial' font-size='42' fill='white'>${persona.toUpperCase()}</text><foreignObject x='70' y='850' width='580' height='240'><div xmlns='http://www.w3.org/1999/xhtml' style='font-family:Arial Black,Arial;color:white;text-align:center;font-size:46px;line-height:1.15;text-shadow:0 4px 18px black'>${prediction}</div></foreignObject><text x='360' y='1160' text-anchor='middle' font-family='Arial' font-size='28' fill='white'>send this to a rival fan →</text></svg>`
@@ -148,24 +154,24 @@ function AppInner() {
     const next = [base, ...jobs]
     setJobs(next); saveJobs(next)
     try {
-      convexId = await createJob({ email, side, persona, prediction, prompt, script })
+      convexId = await withTimeout(createJob({ email, side, persona, prediction, prompt, script }), 2500, 'Convex createJob').catch(() => undefined)
       if (convexId) {
         base.convexId = convexId
         const withConvexId = [{ ...base }, ...jobs]
         setJobs(withConvexId); saveJobs(withConvexId)
       }
-      const res = await fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, side, persona, prediction, prompt, script }) })
+      const res = await withTimeout(fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, side, persona, prediction, prompt, script }) }), 45000, 'Generate API')
       if (!res.ok) throw new Error(`API ${res.status}`)
       const data = await res.json()
       const status: JobStatus = data.videoUrl ? 'completed' : 'fallback'
       const done: Job = { ...base, convexId, status, videoUrl: data.videoUrl || fallbackVideo(side, persona, prediction), voiceUrl: data.voiceUrl, caption, script: data.script || script }
-      if (convexId) await completeJob({ jobId: convexId, status, videoUrl: data.videoUrl, voiceUrl: data.voiceUrl })
+      if (convexId) await completeJob({ jobId: convexId, status, videoUrl: data.videoUrl, voiceUrl: data.voiceUrl }).catch(() => undefined)
       const updated = [done, ...jobs]
       setJobs(updated); saveJobs(updated)
     } catch (err) {
       const error = err instanceof Error ? err.message : 'fallback'
       const done: Job = { ...base, convexId, status: 'fallback', videoUrl: fallbackVideo(side, persona, prediction), error, caption }
-      if (convexId) await completeJob({ jobId: convexId, status: 'fallback', error })
+      if (convexId) await completeJob({ jobId: convexId, status: 'fallback', error }).catch(() => undefined)
       const updated = [done, ...jobs]
       setJobs(updated); saveJobs(updated)
     }
@@ -174,13 +180,13 @@ function AppInner() {
   async function trackShare(job: Job) {
     const next = { ...proof, shareClicks: proof.shareClicks + 1 }
     setProof(next); saveProof(next)
-    await trackEvent({ email: job.email, type: 'share_click', metadata: { side: job.side, persona: job.persona } })
     navigator.clipboard?.writeText(job.caption)
+    await trackEvent({ email: job.email, type: 'share_click', metadata: { side: job.side, persona: job.persona } }).catch(() => undefined)
   }
 
   async function openDodo(job?: Job) {
-    await trackEvent({ email: job?.email || email || undefined, type: 'dodo_checkout_click', metadata: { product: 'Anime Derby Premium Battle Pack', url: dodoCheckout } })
     window.open(dodoCheckout, '_blank', 'noopener,noreferrer')
+    await trackEvent({ email: job?.email || email || undefined, type: 'dodo_checkout_click', metadata: { product: 'Anime Derby Premium Battle Pack', url: dodoCheckout } }).catch(() => undefined)
   }
 
   if (adminMode) {
@@ -215,6 +221,7 @@ function AppInner() {
       <label>Persona<select value={persona} onChange={e => setPersona(e.target.value as Persona)}>{personas.map(x => <option key={x}>{x}</option>)}</select></label>
       <label>Prediction<select value={prediction} onChange={e => setPrediction(e.target.value as Prediction)}>{predictions.map(x => <option key={x}>{x}</option>)}</select></label>
       <button type="submit">Generate prophecy</button>
+      {latest?.status === 'generating' && <p className="sub">Generating now… if AI video is slow, a prophecy card fallback appears automatically.</p>}
     </form>
     {latest && <section className="result panel"><h2>Your prophecy</h2><p className="badge">{latest.status}</p><div className="output"><img src={latest.videoUrl || fallbackVideo(latest.side, latest.persona, latest.prediction)} alt="generated anime prophecy" /><div><h3>Commentator script</h3><p>{latest.script}</p><h3>Share caption</h3><pre>{latest.caption}</pre><div className="buttons"><button onClick={() => trackShare(latest)}>Copy caption + track share</button><button onClick={() => openDodo(latest)}>$2 premium battle pack</button></div>{latest.voiceUrl && <audio controls src={latest.voiceUrl} />}</div></div></section>}
     <section className="panel"><h2>Live proof hooks</h2><div className="checklist"><span>Cloudflare Seedance route</span><span>Convex live database</span><span>LinkUp context hook</span><span>Dodo checkout link</span><span>ElevenLabs voice hook</span><span>Wispr screenshot slot in /proof</span></div></section>
