@@ -43,7 +43,7 @@ async function runSeedance(env: Env, prompt: string) {
       'Content-Type': 'application/json',
       'cf-aig-gateway-id': 'default',
     },
-    body: JSON.stringify({ model: 'bytedance/seedance-2.0', input: { prompt, aspect_ratio: '9:16', duration: 5, resolution: '720p' } }),
+    body: JSON.stringify({ model: 'bytedance/seedance-2.0', input: { prompt, aspect_ratio: '9:16', duration: 10, resolution: '720p' } }),
   })
   if (!res.ok) return undefined
   const data: any = await res.json()

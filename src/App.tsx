@@ -75,7 +75,7 @@ function buildScript(side: Side, persona: Persona, prediction: Prediction) {
 }
 function buildPrompt(side: Side, persona: Persona, prediction: Prediction) {
   const sideColor = side === 'France' ? 'blue-white-red aura' : 'red-gold aura'
-  return `A 5-second vertical anime-inspired football prophecy video for a France vs Spain football semi-final. No real player likenesses, no official logos, no copyrighted anime style names. Use generic football archetypes and team color energy. Scene: ${side} fan hero/striker under glowing stadium lights, ${sideColor}, dramatic speed lines, football aura, comedic sports shonen energy. Persona: ${persona}. Prediction: ${prediction}. Mood: funny, cinematic, social media reel, high-energy, memeable. End with a dramatic freeze-frame feeling.`
+  return `A 10-second vertical anime-inspired football prophecy video for a France vs Spain football semi-final. No real player likenesses, no official logos, no copyrighted anime style names. Use generic football archetypes and team color energy. Scene: ${side} fan hero/striker under glowing stadium lights, ${sideColor}, dramatic speed lines, football aura, comedic sports shonen energy. Persona: ${persona}. Prediction: ${prediction}. Mood: funny, cinematic, social media reel, high-energy, memeable. End with a dramatic freeze-frame feeling.`
 }
 function buildCaption(side: Side, persona: Persona, prediction: Prediction) {
   return `I just generated my France vs Spain anime prophecy.\n\nTeam: ${side}\nPersona: ${persona}\nPrediction: ${prediction}\n\nmake your counter-video here:\n${liveUrl}`
