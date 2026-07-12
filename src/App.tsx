@@ -1,5 +1,8 @@
 import { useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
+import { ConvexProvider, ConvexReactClient, useMutation, useQuery } from 'convex/react'
+import type { Id } from '../convex/_generated/dataModel'
+import { api } from '../convex/_generated/api'
 import './App.css'
 
 type Side = 'France' | 'Spain'
@@ -9,6 +12,7 @@ type JobStatus = 'draft' | 'generating' | 'completed' | 'fallback' | 'failed'
 
 type Job = {
   id: string
+  convexId?: Id<'videoJobs'>
   email: string
   side: Side
   persona: Persona
@@ -30,10 +34,29 @@ type Proof = {
   socialPosts: { platform: string; url: string; views: number; likes: number; comments: number }[]
 }
 
+type ConvexProof = {
+  signups: number
+  activatedUsers: number
+  videosGenerated: number
+  successful: number
+  fallback: number
+  failed: number
+  franceFans: number
+  spainFans: number
+  shareClicks: number
+  dodoCheckoutClicks: number
+  paymentsCount: number
+  paymentsAmount: number
+  latestUsers: { email: string; side?: string; createdAt: number }[]
+  latestJobs: { _id: Id<'videoJobs'>; email: string; side: string; persona: string; status: string; createdAt: number }[]
+}
+
 const personas: Persona[] = ['delusional fan', 'VAR villain', 'anime striker', 'cursed goalkeeper', 'toxic pundit']
 const predictions: Prediction[] = ['France wins', 'Spain wins', 'penalties chaos', 'VAR meltdown', 'last-minute screamer']
-const dodoCheckout = import.meta.env.VITE_DODO_CHECKOUT_URL || 'https://checkout.dodopayments.com/'
+const dodoCheckout = import.meta.env.VITE_DODO_CHECKOUT_URL || 'https://test.checkout.dodopayments.com/buy/pdt_0Nj0OfvJ6sbm2LfZ4ePvA?quantity=1'
 const liveUrl = import.meta.env.VITE_PUBLIC_URL || window.location.origin
+const convexUrl = import.meta.env.VITE_CONVEX_URL || 'https://adamant-sparrow-609.convex.cloud'
+const convexClient = new ConvexReactClient(convexUrl)
 
 function loadJobs(): Job[] {
   try { return JSON.parse(localStorage.getItem('anime-derby-jobs') || '[]') } catch { return [] }
@@ -64,6 +87,10 @@ function fallbackVideo(side: Side, persona: Persona, prediction: Prediction) {
 }
 
 export default function App() {
+  return <ConvexProvider client={convexClient}><AppInner /></ConvexProvider>
+}
+
+function AppInner() {
   const [email, setEmail] = useState('')
   const [side, setSide] = useState<Side>('France')
   const [persona, setPersona] = useState<Persona>('delusional fan')
@@ -72,7 +99,26 @@ export default function App() {
   const [proof, setProof] = useState<Proof>(loadProof)
   const [adminMode, setAdminMode] = useState(location.pathname.includes('proof') || location.pathname.includes('admin'))
 
+  const convexProof = useQuery(api.jobs.proof) as ConvexProof | undefined
+  const createJob = useMutation(api.jobs.createJob)
+  const completeJob = useMutation(api.jobs.completeJob)
+  const trackEvent = useMutation(api.jobs.trackEvent)
+
   const stats = useMemo(() => {
+    if (convexProof) return {
+      signups: convexProof.signups,
+      activated: convexProof.activatedUsers,
+      videos: convexProof.videosGenerated,
+      successful: convexProof.successful,
+      fallback: convexProof.fallback,
+      failed: convexProof.failed,
+      france: convexProof.franceFans,
+      spain: convexProof.spainFans,
+      shareClicks: convexProof.shareClicks,
+      dodoClicks: convexProof.dodoCheckoutClicks,
+      paymentsCount: convexProof.paymentsCount,
+      paymentsAmount: convexProof.paymentsAmount,
+    }
     const emails = new Set(jobs.map(j => j.email))
     const activated = new Set(jobs.filter(j => ['completed', 'fallback'].includes(j.status)).map(j => j.email))
     return {
@@ -84,8 +130,12 @@ export default function App() {
       failed: jobs.filter(j => j.status === 'failed').length,
       france: jobs.filter(j => j.side === 'France').length,
       spain: jobs.filter(j => j.side === 'Spain').length,
+      shareClicks: proof.shareClicks,
+      dodoClicks: 0,
+      paymentsCount: proof.paymentsCount,
+      paymentsAmount: proof.paymentsAmount,
     }
-  }, [jobs])
+  }, [convexProof, jobs, proof])
 
   async function generate(e: FormEvent) {
     e.preventDefault()
@@ -93,46 +143,65 @@ export default function App() {
     const script = buildScript(side, persona, prediction)
     const caption = buildCaption(side, persona, prediction)
     const id = crypto.randomUUID()
+    let convexId: Id<'videoJobs'> | undefined
     const base: Job = { id, email, side, persona, prediction, prompt, script, caption, status: 'generating', createdAt: Date.now() }
     const next = [base, ...jobs]
     setJobs(next); saveJobs(next)
     try {
+      convexId = await createJob({ email, side, persona, prediction, prompt, script })
+      if (convexId) {
+        base.convexId = convexId
+        const withConvexId = [{ ...base }, ...jobs]
+        setJobs(withConvexId); saveJobs(withConvexId)
+      }
       const res = await fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, side, persona, prediction, prompt, script }) })
       if (!res.ok) throw new Error(`API ${res.status}`)
       const data = await res.json()
-      const done: Job = { ...base, status: data.videoUrl ? 'completed' : 'fallback', videoUrl: data.videoUrl || fallbackVideo(side, persona, prediction), voiceUrl: data.voiceUrl, caption, script: data.script || script }
+      const status: JobStatus = data.videoUrl ? 'completed' : 'fallback'
+      const done: Job = { ...base, convexId, status, videoUrl: data.videoUrl || fallbackVideo(side, persona, prediction), voiceUrl: data.voiceUrl, caption, script: data.script || script }
+      if (convexId) await completeJob({ jobId: convexId, status, videoUrl: data.videoUrl, voiceUrl: data.voiceUrl })
       const updated = [done, ...jobs]
       setJobs(updated); saveJobs(updated)
     } catch (err) {
-      const done: Job = { ...base, status: 'fallback', videoUrl: fallbackVideo(side, persona, prediction), error: err instanceof Error ? err.message : 'fallback', caption }
+      const error = err instanceof Error ? err.message : 'fallback'
+      const done: Job = { ...base, convexId, status: 'fallback', videoUrl: fallbackVideo(side, persona, prediction), error, caption }
+      if (convexId) await completeJob({ jobId: convexId, status: 'fallback', error })
       const updated = [done, ...jobs]
       setJobs(updated); saveJobs(updated)
     }
   }
 
-  function trackShare(job: Job) {
+  async function trackShare(job: Job) {
     const next = { ...proof, shareClicks: proof.shareClicks + 1 }
     setProof(next); saveProof(next)
+    await trackEvent({ email: job.email, type: 'share_click', metadata: { side: job.side, persona: job.persona } })
     navigator.clipboard?.writeText(job.caption)
   }
 
+  async function openDodo(job?: Job) {
+    await trackEvent({ email: job?.email || email || undefined, type: 'dodo_checkout_click', metadata: { product: 'Anime Derby Premium Battle Pack', url: dodoCheckout } })
+    window.open(dodoCheckout, '_blank', 'noopener,noreferrer')
+  }
+
   if (adminMode) {
+    const latestConvexJobs = convexProof?.latestJobs || []
+    const latestLocalJobs = jobs.slice(0, 15)
     return <main className="app admin">
       <button className="ghost" onClick={() => setAdminMode(false)}>← back to product</button>
       <h1>Anime Derby Proof Dashboard</h1>
-      <p className="sub">Judge-fast proof for Cloudflare + Convex + LinkUp + Dodo + ElevenLabs + Wispr.</p>
+      <p className="sub">Live proof for Cloudflare + Convex + LinkUp + Dodo + ElevenLabs + Wispr.</p>
       <section className="grid stats">
         <Metric label="Signups" value={stats.signups} /><Metric label="Activated users" value={stats.activated} /><Metric label="Videos generated" value={stats.videos} /><Metric label="Successful video jobs" value={stats.successful} />
         <Metric label="Fallback/static outputs" value={stats.fallback} /><Metric label="Failed jobs" value={stats.failed} /><Metric label="France fans" value={stats.france} /><Metric label="Spain fans" value={stats.spain} />
-        <Metric label="Share clicks" value={proof.shareClicks} /><Metric label="Dodo payments" value={`${proof.paymentsCount} / $${proof.paymentsAmount}`} />
+        <Metric label="Share clicks" value={stats.shareClicks} /><Metric label="Dodo checkout clicks" value={stats.dodoClicks} /><Metric label="Dodo payments" value={`${stats.paymentsCount} / $${stats.paymentsAmount}`} />
       </section>
       <section className="panel"><h2>Sponsor checklist</h2><div className="checklist">
-        {['Cloudflare Pages + Workers AI Seedance route','Convex schema/actions for users, jobs, events, payments','LinkUp live-context hook in generation route','Dodo premium checkout button','ElevenLabs commentator voice note hook','Wispr Flow proof screenshot placeholder'].map(x => <span key={x}>✅ {x}</span>)}
+        {['Cloudflare Pages + Workers AI Seedance route','Convex live database for users, jobs, events, proof metrics','LinkUp live-context hook in generation route','Dodo real test-mode product checkout link + click tracking','ElevenLabs commentator voice note hook','Wispr Flow proof screenshot placeholder'].map(x => <span key={x}>✅ {x}</span>)}
       </div></section>
-      <section className="panel"><h2>Dashboard links</h2><div className="buttons"><a href="https://dash.cloudflare.com/" target="_blank">Cloudflare dashboard</a><a href="https://dashboard.convex.dev/" target="_blank">Convex dashboard</a><a href="https://app.dodopayments.com/" target="_blank">Dodo dashboard</a><a href={dodoCheckout} target="_blank">Dodo checkout</a></div></section>
-      <section className="panel"><h2>Manual social metrics</h2><ManualProof proof={proof} setProof={(p) => { setProof(p); saveProof(p) }} /></section>
-      <section className="panel"><h2>Latest users</h2><table><tbody>{Array.from(new Set(jobs.map(j=>j.email))).slice(0,12).map(mail => <tr key={mail}><td>{mail}</td><td>{jobs.find(j=>j.email===mail)?.side}</td><td>{new Date(jobs.find(j=>j.email===mail)!.createdAt).toLocaleString()}</td></tr>)}</tbody></table></section>
-      <section className="panel"><h2>Latest video jobs</h2><table><thead><tr><th>Email</th><th>Side</th><th>Persona</th><th>Status</th><th>Created</th></tr></thead><tbody>{jobs.slice(0,15).map(j => <tr key={j.id}><td>{j.email}</td><td>{j.side}</td><td>{j.persona}</td><td>{j.status}</td><td>{new Date(j.createdAt).toLocaleTimeString()}</td></tr>)}</tbody></table></section>
+      <section className="panel"><h2>Dashboard links</h2><div className="buttons"><a href="https://dash.cloudflare.com/" target="_blank">Cloudflare dashboard</a><a href="https://dashboard.convex.dev/t/abel-chin/anime-derby" target="_blank">Convex dashboard</a><a href="https://app.dodopayments.com/products" target="_blank">Dodo product</a><button onClick={() => openDodo()}>Open Dodo checkout</button></div></section>
+      <section className="panel"><h2>Manual social metrics fallback</h2><ManualProof proof={proof} setProof={(p) => { setProof(p); saveProof(p) }} /></section>
+      <section className="panel"><h2>Latest users</h2><table><tbody>{(convexProof?.latestUsers || Array.from(new Set(jobs.map(j=>j.email))).map(mail => ({ email: mail, side: jobs.find(j=>j.email===mail)?.side, createdAt: jobs.find(j=>j.email===mail)?.createdAt || Date.now() }))).slice(0,12).map(user => <tr key={user.email}><td>{user.email}</td><td>{user.side}</td><td>{new Date(user.createdAt).toLocaleString()}</td></tr>)}</tbody></table></section>
+      <section className="panel"><h2>Latest video jobs</h2><table><thead><tr><th>Email</th><th>Side</th><th>Persona</th><th>Status</th><th>Created</th></tr></thead><tbody>{(latestConvexJobs.length ? latestConvexJobs : latestLocalJobs).map(j => <tr key={'_id' in j ? j._id : j.id}><td>{j.email}</td><td>{j.side}</td><td>{j.persona}</td><td>{j.status}</td><td>{new Date(j.createdAt).toLocaleTimeString()}</td></tr>)}</tbody></table></section>
     </main>
   }
 
@@ -147,8 +216,8 @@ export default function App() {
       <label>Prediction<select value={prediction} onChange={e => setPrediction(e.target.value as Prediction)}>{predictions.map(x => <option key={x}>{x}</option>)}</select></label>
       <button type="submit">Generate prophecy</button>
     </form>
-    {latest && <section className="result panel"><h2>Your prophecy</h2><p className="badge">{latest.status}</p><div className="output"><img src={latest.videoUrl || fallbackVideo(latest.side, latest.persona, latest.prediction)} alt="generated anime prophecy" /><div><h3>Commentator script</h3><p>{latest.script}</p><h3>Share caption</h3><pre>{latest.caption}</pre><div className="buttons"><button onClick={() => trackShare(latest)}>Copy caption + track share</button><a href={dodoCheckout} target="_blank">$2 premium battle pack</a></div>{latest.voiceUrl && <audio controls src={latest.voiceUrl} />}</div></div></section>}
-    <section className="panel"><h2>Live proof hooks</h2><div className="checklist"><span>Cloudflare Seedance-ready route</span><span>Convex schema included</span><span>LinkUp context hook</span><span>Dodo checkout CTA</span><span>ElevenLabs voice hook</span><span>Wispr screenshot slot in /proof</span></div></section>
+    {latest && <section className="result panel"><h2>Your prophecy</h2><p className="badge">{latest.status}</p><div className="output"><img src={latest.videoUrl || fallbackVideo(latest.side, latest.persona, latest.prediction)} alt="generated anime prophecy" /><div><h3>Commentator script</h3><p>{latest.script}</p><h3>Share caption</h3><pre>{latest.caption}</pre><div className="buttons"><button onClick={() => trackShare(latest)}>Copy caption + track share</button><button onClick={() => openDodo(latest)}>$2 premium battle pack</button></div>{latest.voiceUrl && <audio controls src={latest.voiceUrl} />}</div></div></section>}
+    <section className="panel"><h2>Live proof hooks</h2><div className="checklist"><span>Cloudflare Seedance route</span><span>Convex live database</span><span>LinkUp context hook</span><span>Dodo checkout link</span><span>ElevenLabs voice hook</span><span>Wispr screenshot slot in /proof</span></div></section>
   </main>
 }
 function Metric({ label, value }: { label: string; value: string | number }) { return <div className="metric"><small>{label}</small><b>{value}</b></div> }
