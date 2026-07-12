@@ -3,15 +3,19 @@
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const body = await request.json() as GenerateRequest
   const script = body.script || `Anime Derby prophecy for ${body.side}: ${body.prediction}.`
-  const context = await fetchLinkUpContext(env, body)
+  const context = await withTimeout(
+    fetchLinkUpContext(env, body),
+    3000,
+    'LinkUp context timed out; using generic football rivalry context.',
+  )
   const prompt = `${body.prompt}\nGrounding context: ${context}`
 
-  const [videoUrl, voiceUrl] = await Promise.all([
-    runSeedance(env, prompt).catch(() => undefined),
-    runElevenLabs(env, script).catch(() => undefined),
-  ])
+  // Seedance can take 2+ minutes for 10s 720p output. Do not let optional voice
+  // generation block video delivery.
+  const videoUrl = await runSeedance(env, prompt)
+  const voiceUrl = await withTimeout(runElevenLabs(env, script), 12000, undefined)
 
-  return Response.json({ ok: true, script, videoUrl, voiceUrl, contextUsed: Boolean(context) })
+  return Response.json({ ok: true, script, videoUrl, voiceUrl, contextUsed: Boolean(context), mode: videoUrl ? 'video' : 'fallback' })
 }
 
 type Env = {
@@ -22,6 +26,18 @@ type Env = {
   ELEVENLABS_VOICE_ID?: string
 }
 type GenerateRequest = { email: string; side: string; persona: string; prediction: string; prompt: string; script?: string }
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((resolve) => { timer = setTimeout(() => resolve(fallback), ms) }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
 
 async function fetchLinkUpContext(env: Env, body: GenerateRequest) {
   if (!env.LINKUP_API_KEY) return 'No LinkUp key configured; using safe generic France vs Spain rivalry context.'
@@ -59,7 +75,10 @@ async function runElevenLabs(env: Env, script: string) {
     body: JSON.stringify({ text: script, model_id: 'eleven_multilingual_v2', voice_settings: { stability: 0.4, similarity_boost: 0.7 } }),
   })
   if (!res.ok) return undefined
-  const audio = await res.arrayBuffer()
-  const b64 = btoa(String.fromCharCode(...new Uint8Array(audio)))
-  return `data:audio/mpeg;base64,${b64}`
+  const audio = new Uint8Array(await res.arrayBuffer())
+  let binary = ''
+  for (let i = 0; i < audio.length; i += 0x8000) {
+    binary += String.fromCharCode(...audio.subarray(i, i + 0x8000))
+  }
+  return `data:audio/mpeg;base64,${btoa(binary)}`
 }

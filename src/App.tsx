@@ -160,7 +160,7 @@ function AppInner() {
         const withConvexId = [{ ...base }, ...jobs]
         setJobs(withConvexId); saveJobs(withConvexId)
       }
-      const res = await withTimeout(fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, side, persona, prediction, prompt, script }) }), 45000, 'Generate API')
+      const res = await withTimeout(fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, side, persona, prediction, prompt, script }) }), 210000, 'Generate API')
       if (!res.ok) throw new Error(`API ${res.status}`)
       const data = await res.json()
       const status: JobStatus = data.videoUrl ? 'completed' : 'fallback'
@@ -221,13 +221,20 @@ function AppInner() {
       <label>Persona<select value={persona} onChange={e => setPersona(e.target.value as Persona)}>{personas.map(x => <option key={x}>{x}</option>)}</select></label>
       <label>Prediction<select value={prediction} onChange={e => setPrediction(e.target.value as Prediction)}>{predictions.map(x => <option key={x}>{x}</option>)}</select></label>
       <button type="submit">Generate prophecy</button>
-      {latest?.status === 'generating' && <p className="sub">Generating now… if AI video is slow, a prophecy card fallback appears automatically.</p>}
+      {latest?.status === 'generating' && <p className="sub">Generating a 10-second AI video now… this can take about 2–3 minutes.</p>}
     </form>
-    {latest && <section className="result panel"><h2>Your prophecy</h2><p className="badge">{latest.status}</p><div className="output"><img src={latest.videoUrl || fallbackVideo(latest.side, latest.persona, latest.prediction)} alt="generated anime prophecy" /><div><h3>Commentator script</h3><p>{latest.script}</p><h3>Share caption</h3><pre>{latest.caption}</pre><div className="buttons"><button onClick={() => trackShare(latest)}>Copy caption + track share</button><button onClick={() => openDodo(latest)}>$0.50 premium battle pack</button></div>{latest.voiceUrl && <audio controls src={latest.voiceUrl} />}</div></div></section>}
+    {latest && <section className="result panel"><h2>Your prophecy</h2><p className="badge">{latest.status}</p><div className="output"><ResultMedia job={latest} /><div><h3>Commentator script</h3><p>{latest.script}</p><h3>Share caption</h3><pre>{latest.caption}</pre><div className="buttons"><button onClick={() => trackShare(latest)}>Copy caption + track share</button><button onClick={() => openDodo(latest)}>$0.50 premium battle pack</button></div>{latest.voiceUrl && <audio controls src={latest.voiceUrl} />}</div></div></section>}
     <section className="panel"><h2>Live proof hooks</h2><div className="checklist"><span>Cloudflare Seedance route</span><span>Convex live database</span><span>LinkUp context hook</span><span>Dodo checkout link</span><span>ElevenLabs voice hook</span><span>Wispr screenshot slot in /proof</span></div></section>
   </main>
 }
 function Metric({ label, value }: { label: string; value: string | number }) { return <div className="metric"><small>{label}</small><b>{value}</b></div> }
+function ResultMedia({ job }: { job: Job }) {
+  const url = job.videoUrl || fallbackVideo(job.side, job.persona, job.prediction)
+  if (job.videoUrl && /\.mp4(\?|$)|\.webm(\?|$)|\.mov(\?|$)/i.test(job.videoUrl)) {
+    return <video src={job.videoUrl} controls playsInline autoPlay loop />
+  }
+  return <img src={url} alt="generated anime prophecy" />
+}
 function ManualProof({ proof, setProof }: { proof: Proof; setProof: (p: Proof) => void }) {
   return <div className="manual"><label>Share clicks<input type="number" value={proof.shareClicks} onChange={e => setProof({ ...proof, shareClicks: +e.target.value })} /></label><label>Dodo count<input type="number" value={proof.paymentsCount} onChange={e => setProof({ ...proof, paymentsCount: +e.target.value })} /></label><label>Dodo amount<input type="number" value={proof.paymentsAmount} onChange={e => setProof({ ...proof, paymentsAmount: +e.target.value })} /></label></div>
 }
